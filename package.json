@@ -1,0 +1,22 @@
+{
+  "name": "wechat-mini-game",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "matter-js": "^0.20.0",
+    "mobx": "^6.16.1",
+    "pixi.js": "^6.5.10"
+  },
+  "devDependencies": {
+    "@rollup/plugin-node-resolve": "^16.0.3",
+    "rollup": "^4.62.0",
+    "vite": "^8.0.16"
+  }
+}
