@@ -9,6 +9,7 @@ import {
   CANVAS_WIDTH, CANVAS_HEIGHT,
   CONTAINER, DANGER_LINE_Y, PHYSICS,
   BALL_LEVELS, DROP, GAME_OVER, THEME,
+  MILESTONE_LEVELS,
 } from '../config/constants.js';
 
 // ============================================================
@@ -33,9 +34,8 @@ export class Game {
     this._setupInput();
     this._setupUI();
 
-    // 用于动画计算的累计时间
     this._animTime = 0;
-    this._lastPreviewLevel = -1; // 缓存避免每帧重绘预览
+    this._lastPreviewLevel = -1;
 
     this.app.ticker.add(() => this._gameLoop());
   }
@@ -61,12 +61,12 @@ export class Game {
   _drawBackground() {
     const W = CANVAS_WIDTH, H = CANVAS_HEIGHT;
 
-    // -- 1. 渐变背景 (canvas texture) --
-    const bgGradient = this._createGradient(W, H, '#07071a', '#101838');
+    // 1. 渐变背景
+    const bgGradient = this._createGradient(W, H, THEME.bgTop, THEME.bgBottom);
     const bgSprite = new PIXI.Sprite(bgGradient);
     this.bgLayer.addChild(bgSprite);
 
-    // -- 2. 微网格 (非常淡) --
+    // 2. 微网格
     const grid = new PIXI.Graphics();
     grid.lineStyle(0.5, 0x334488, 0.06);
     const step = 30;
@@ -74,11 +74,11 @@ export class Game {
     for (let y = 0; y <= H; y += step) { grid.moveTo(0, y); grid.lineTo(W, y); }
     this.bgLayer.addChild(grid);
 
-    // -- 3. 容器底板 (玻璃质感) --
+    // 3. 容器底板 (玻璃质感)
     const { x, y, width, height, cornerRadius: cr } = CONTAINER;
     const bg = new PIXI.Graphics();
 
-    // 外层辉光 (多圈半透明)
+    // 外层辉光
     bg.beginFill(THEME.containerGlow, 0.07);
     bg.drawRoundedRect(x - 6, y - 6, width + 12, height + 12, cr + 4);
     bg.endFill();
@@ -91,7 +91,7 @@ export class Game {
     bg.drawRoundedRect(x, y, width, height, cr);
     bg.endFill();
 
-    // 顶部微光扫过 (模拟玻璃反射)
+    // 顶部微光扫过
     bg.beginFill(0xFFFFFF, 0.03);
     bg.drawRoundedRect(x + 4, y + 4, width - 8, height * 0.3, cr - 4);
     bg.endFill();
@@ -101,7 +101,7 @@ export class Game {
     bg.drawRoundedRect(x, y, width, height, cr);
     bg.lineStyle(0);
 
-    // 墙壁可视
+    // 墙壁
     const t = CONTAINER.wallThickness;
     bg.beginFill(THEME.containerBorder, 0.3);
     bg.drawRect(x - t, y, t, height);
@@ -109,7 +109,7 @@ export class Game {
     bg.drawRect(x - t, y + height, width + t * 2, t);
     bg.endFill();
 
-    // 危险线 (会呼吸 — 存储引用以做动画)
+    // 危险线 (动态呼吸)
     this._dangerLineGfx = new PIXI.Graphics();
     bg.addChild(this._dangerLineGfx);
 
@@ -247,10 +247,10 @@ export class Game {
     // 2. 合成
     this.mergeSystem.processMerges();
 
-    // 3. 清理
+    // 3. 清理死球
     this._cleanupDeadBalls();
 
-    // 4. 冷却 → 自动出球
+    // 4. 冷却 -> 自动出球
     if (this._dropCooldownRemaining > 0) {
       this._dropCooldownRemaining -= dt;
       if (this._dropCooldownRemaining <= 0) {
@@ -267,7 +267,6 @@ export class Game {
       const ball = gameStore.currentBall;
       Matter.Body.setPosition(ball.body, { x: gameStore.aimX, y: DROP.spawnY });
       Matter.Body.setVelocity(ball.body, { x: 0, y: 0 });
-      // 入场缩放恢复
       if (ball.display.scale.x < 1) {
         ball.display.scale.set(Math.min(1, ball.display.scale.x + 0.06));
         ball.display.alpha = Math.min(1, ball.display.alpha + 0.06);
@@ -279,12 +278,15 @@ export class Game {
     this._checkBallEntry();
 
     // 7. 游戏结束检测
-    this._checkGameOver(dt);
+    this._checkGameOver();
 
-    // 8. 特效更新
+    // 8. 氛围粒子
+    this.effectSystem.ambientParticles.update(dt, this._animTime);
+
+    // 9. 特效更新
     this.effectSystem.update(dt);
 
-    // 9. 同步球体
+    // 10. 同步球体
     for (const ball of this.balls) {
       if (ball.body && !ball._markedForRemoval) {
         ball.update(dt);
@@ -292,15 +294,15 @@ export class Game {
       }
     }
 
-    // 10. 屏幕震动
+    // 11. 屏幕震动
     const shake = this.effectSystem.getShakeOffset();
     this.stage.x = shake.x;
     this.stage.y = shake.y;
 
-    // 11. 危险线呼吸动画
+    // 12. 危险线呼吸动画
     this._updateDangerLine();
 
-    // 12. UI
+    // 13. UI 更新
     this._updateUI();
   }
 
@@ -318,7 +320,6 @@ export class Game {
       if (ball.isDropped && !ball.isInContainer) {
         if (this.container.isBallInside(ball)) {
           ball.isInContainer = true;
-          // 入水波纹特效 (轻量)
           this.effectSystem.emitMergeParticles(
             ball.body.position.x, CONTAINER.y + ball.radius, ball.color, 6, 0.3
           );
@@ -327,7 +328,7 @@ export class Game {
     }
   }
 
-  _checkGameOver(_dt) {
+  _checkGameOver() {
     let anyAbove = false;
     for (const ball of this.balls) {
       if (!ball.isInContainer || !ball.body || ball._markedForRemoval) continue;
@@ -358,7 +359,6 @@ export class Game {
   _updateDangerLine() {
     const g = this._dangerLineGfx;
     g.clear();
-    // 呼吸效果
     const breath = 0.4 + 0.25 * Math.sin(this._animTime * 0.004);
     g.lineStyle(2, THEME.danger, breath);
     const { x, width } = CONTAINER;
@@ -370,7 +370,6 @@ export class Game {
       g.lineTo(end, DANGER_LINE_Y);
       dx = end + gap;
     }
-    // 危险线辉光
     g.lineStyle(4, THEME.danger, breath * 0.2);
     dx = x;
     while (dx < x + width) {
@@ -386,19 +385,36 @@ export class Game {
   _onMerge(newBall, x, y, score) {
     this.balls.push(newBall);
     this.ballLayer.addChild(newBall.display);
-    // 合成生成球出现缩放动画
+
     newBall.display.scale.set(1.3);
     newBall.display.alpha = 0.7;
 
     const def = BALL_LEVELS[newBall.level];
+
     this.effectSystem.emitMergeParticles(x, y, def.body);
-    this.effectSystem.emitMergeParticles(x, y, 0xFFFFFF, 6, 0.7); // 金色火花
+    this.effectSystem.emitMergeParticles(x, y, 0xFFFFFF, 6, 0.7);
     this.effectSystem.showScorePopup(x, y, score, gameStore.comboText);
 
-    if (newBall.level >= 5) {
-      this.effectSystem.shakeScreen(newBall.level >= 8 ? 8 : 5, newBall.level >= 8 ? 400 : 250);
-    } else if (newBall.level >= 3) {
-      this.effectSystem.shakeScreen(3, 150);
+    // 冲击波
+    if (newBall.level >= 6) {
+      this.effectSystem.emitShockwave(x, y, def.glow, newBall.level >= 9 ? 4 : 3);
+    }
+
+    // 里程碑庆祝
+    if (MILESTONE_LEVELS.includes(newBall.level)) {
+      this.effectSystem.emitMergeParticles(x, y, 0xFFD700, 40, 1.5);
+      this.effectSystem.emitMergeParticles(x, y, 0xFFFFFF, 25, 1.2);
+      this.effectSystem.shakeScreen(12, 500);
+      this._celebrateMilestone(y);
+    }
+
+    // 普通震动 (里程碑不重复)
+    if (!MILESTONE_LEVELS.includes(newBall.level)) {
+      if (newBall.level >= 5) {
+        this.effectSystem.shakeScreen(newBall.level >= 8 ? 8 : 5, newBall.level >= 8 ? 400 : 250);
+      } else if (newBall.level >= 3) {
+        this.effectSystem.shakeScreen(3, 150);
+      }
     }
 
     if (navigator.vibrate) {
@@ -426,16 +442,57 @@ export class Game {
     gameStore.endGame();
     this.gameOverPanel.visible = true;
     this._finalScoreText.text = `${gameStore.score}`;
-    this._finalHighText.text = gameStore.score >= gameStore.highScore
-      ? '🎉 新纪录!' : `最高分: ${gameStore.highScore}`;
+
+    const isNewRecord = gameStore.score >= gameStore.highScore && gameStore.score > 0;
+    this._finalHighText.text = isNewRecord
+      ? '🎉 新纪录！'
+      : `🏆 最高分: ${gameStore.highScore}`;
 
     const lvlDef = BALL_LEVELS[gameStore.maxLevel];
     this._finalLevelText.text = `最高合成: ${lvlDef.emoji} ${lvlDef.name}`;
-    this._finalScoreText.style.fill = gameStore.score >= gameStore.highScore && gameStore.score > 0
-      ? THEME.accent : 0xffffff;
+
+    this._finalStatsText.text = gameStore.totalMerges > 0
+      ? `合并 ${gameStore.totalMerges} 次 · 最高 ${gameStore.maxCombo} 连击`
+      : '';
+
+    this._finalScoreText.style.fill = isNewRecord ? THEME.accent : 0xffffff;
   }
 
   _restart() { this._startGame(); }
+
+  _celebrateMilestone(y) {
+    const text = new PIXI.Text('🎉 里程碑达成!', {
+      fontFamily: 'Arial, sans-serif',
+      fontSize: 26,
+      fontWeight: '900',
+      fill: 0xFFD700,
+      dropShadow: true,
+      dropShadowColor: 0x000000,
+      dropShadowBlur: 8,
+      dropShadowDistance: 0,
+      align: 'center',
+    });
+    text.anchor.set(0.5);
+    text.x = CANVAS_WIDTH / 2;
+    text.y = y - 40;
+    text.alpha = 1;
+    this.uiLayer.addChild(text);
+
+    const startTime = this._animTime;
+    const duration = 1500;
+    const ticker = () => {
+      const elapsed = this._animTime - startTime;
+      const t = Math.min(elapsed / duration, 1);
+      text.scale.set(1 + t * 0.6);
+      text.alpha = 1 - t * t;
+      if (t >= 1) {
+        this.uiLayer.removeChild(text);
+        text.destroy();
+        this.app.ticker.remove(ticker);
+      }
+    };
+    this.app.ticker.add(ticker);
+  }
 
   _cleanAllBalls() {
     for (const b of this.balls) b.destroy();
@@ -445,19 +502,19 @@ export class Game {
     this.stage.x = 0; this.stage.y = 0;
   }
 
-  // ==================== UI ====================
+  // ==================== UI 构建 ====================
 
   _setupUI() {
     const { x, y, width, height } = CONTAINER;
 
-    // -- 顶栏背景 --
+    // 顶栏背景
     const topBar = new PIXI.Graphics();
     topBar.beginFill(0x000000, 0.2);
     topBar.drawRoundedRect(x - 4, y - 115, width + 8, 130, 10);
     topBar.endFill();
     this.uiLayer.addChild(topBar);
 
-    // -- 分数 --
+    // 分数
     this.scoreText = new PIXI.Text('0', {
       fontFamily: 'Arial, "Helvetica Neue", sans-serif',
       fontSize: 34, fontWeight: '900', fill: 0xffffff,
@@ -473,7 +530,7 @@ export class Game {
     scoreLabel.x = x + 16; scoreLabel.y = y - 118;
     this.uiLayer.addChild(scoreLabel);
 
-    // -- 最高分 --
+    // 最高分
     this.highScoreText = new PIXI.Text('', {
       fontFamily: 'Arial, sans-serif', fontSize: 18, fontWeight: 'bold',
       fill: THEME.accent,
@@ -491,13 +548,12 @@ export class Game {
     highLabel.x = x + width - 14; highLabel.y = y - 115;
     this.uiLayer.addChild(highLabel);
 
-    // -- 下一个球预览 --
+    // 下一个球预览
     this.previewBall = new PIXI.Container();
     this.previewBall.x = CANVAS_WIDTH / 2;
     this.previewBall.y = y - 52;
     this.uiLayer.addChild(this.previewBall);
 
-    // 预览环
     this._previewRing = new PIXI.Graphics();
     this.previewBall.addChild(this._previewRing);
 
@@ -509,7 +565,7 @@ export class Game {
     previewLabel.x = CANVAS_WIDTH / 2; previewLabel.y = y - 82;
     this.uiLayer.addChild(previewLabel);
 
-    // -- 连击 --
+    // 连击
     this.comboText = new PIXI.Text('', {
       fontFamily: 'Arial, sans-serif', fontSize: 20, fontWeight: 'bold',
       fill: THEME.accent,
@@ -520,7 +576,7 @@ export class Game {
     this.comboText.x = CANVAS_WIDTH / 2; this.comboText.y = y + height + 35;
     this.uiLayer.addChild(this.comboText);
 
-    // -- 容器内球数 --
+    // 容器内球数
     this.ballCountText = new PIXI.Text('', {
       fontFamily: 'Arial, sans-serif', fontSize: 11,
       fill: THEME.textDim, align: 'center',
@@ -529,11 +585,11 @@ export class Game {
     this.ballCountText.x = CANVAS_WIDTH / 2; this.ballCountText.y = y - 8;
     this.uiLayer.addChild(this.ballCountText);
 
-    // -- 瞄准引导线 --
+    // 瞄准引导线
     this._guideLine = new PIXI.Graphics();
     this.uiLayer.addChild(this._guideLine);
 
-    // -- 面板 --
+    // 面板
     this._createStartPanel();
     this._createGameOverPanel();
   }
@@ -542,16 +598,14 @@ export class Game {
 
   _createStartPanel() {
     const p = new PIXI.Container();
-    const W = CANVAS_WIDTH, H = CANVAS_HEIGHT;
+    const W = CANVAS_WIDTH;
 
-    // 半透明遮罩
     const overlay = new PIXI.Graphics();
     overlay.beginFill(0x07071a, 0.82);
-    overlay.drawRect(0, 0, W, H);
+    overlay.drawRect(0, 0, W, CANVAS_HEIGHT);
     overlay.endFill();
     p.addChild(overlay);
 
-    // 标题
     const title = new PIXI.Text('合成球球', {
       fontFamily: 'Arial, sans-serif', fontSize: 44, fontWeight: '900',
       fill: 0xffffff,
@@ -566,12 +620,10 @@ export class Game {
     subtitle.anchor.set(0.5); subtitle.x = W / 2; subtitle.y = 270;
     p.addChild(subtitle);
 
-    // 按钮
     const btn = new PIXI.Graphics();
     btn.beginFill(0x4466cc);
     btn.drawRoundedRect(-90, -28, 180, 56, 28);
     btn.endFill();
-    // 按钮高光
     btn.beginFill(0xFFFFFF, 0.08);
     btn.drawRoundedRect(-90, -28, 180, 28, 28);
     btn.endFill();
@@ -586,7 +638,6 @@ export class Game {
     btnText.anchor.set(0.5); btnText.x = W / 2; btnText.y = 370;
     p.addChild(btnText);
 
-    // 最高分
     if (gameStore.highScore > 0) {
       const hs = new PIXI.Text(`最高分: ${gameStore.highScore}`, {
         fontFamily: 'Arial, sans-serif', fontSize: 16, fill: THEME.accent,
@@ -622,30 +673,35 @@ export class Game {
       fontFamily: 'Arial, sans-serif', fontSize: 56, fontWeight: '900', fill: 0xffffff,
       dropShadow: true, dropShadowColor: 0x000000, dropShadowBlur: 8, dropShadowDistance: 2,
     });
-    this._finalScoreText.anchor.set(0.5); this._finalScoreText.x = W / 2; this._finalScoreText.y = 255;
+    this._finalScoreText.anchor.set(0.5); this._finalScoreText.x = W / 2; this._finalScoreText.y = 245;
     p.addChild(this._finalScoreText);
 
     this._finalHighText = new PIXI.Text('', {
-      fontFamily: 'Arial, sans-serif', fontSize: 20, fill: THEME.accent,
+      fontFamily: 'Arial, sans-serif', fontSize: 18, fill: THEME.accent,
     });
-    this._finalHighText.anchor.set(0.5); this._finalHighText.x = W / 2; this._finalHighText.y = 305;
+    this._finalHighText.anchor.set(0.5); this._finalHighText.x = W / 2; this._finalHighText.y = 295;
     p.addChild(this._finalHighText);
 
     this._finalLevelText = new PIXI.Text('', {
-      fontFamily: 'Arial, sans-serif', fontSize: 16, fill: THEME.textSecondary,
+      fontFamily: 'Arial, sans-serif', fontSize: 15, fill: THEME.textSecondary,
     });
-    this._finalLevelText.anchor.set(0.5); this._finalLevelText.x = W / 2; this._finalLevelText.y = 335;
+    this._finalLevelText.anchor.set(0.5); this._finalLevelText.x = W / 2; this._finalLevelText.y = 318;
     p.addChild(this._finalLevelText);
 
-    // 按钮
+    this._finalStatsText = new PIXI.Text('', {
+      fontFamily: 'Arial, sans-serif', fontSize: 13, fill: THEME.textDim, align: 'center',
+    });
+    this._finalStatsText.anchor.set(0.5); this._finalStatsText.x = W / 2; this._finalStatsText.y = 346;
+    p.addChild(this._finalStatsText);
+
     const btn = new PIXI.Graphics();
     btn.beginFill(0x4466cc);
-    btn.drawRoundedRect(-80, -25, 160, 50, 25);
+    btn.drawRoundedRect(-90, -24, 180, 48, 24);
     btn.endFill();
     btn.beginFill(0xFFFFFF, 0.08);
-    btn.drawRoundedRect(-80, -25, 160, 25, 25);
+    btn.drawRoundedRect(-90, -24, 180, 24, 24);
     btn.endFill();
-    btn.x = W / 2; btn.y = 410;
+    btn.x = W / 2; btn.y = 420;
     btn.interactive = true; btn.buttonMode = true;
     btn.on('pointerdown', () => this._restart());
     p.addChild(btn);
@@ -653,7 +709,7 @@ export class Game {
     const btnText = new PIXI.Text('再来一局', {
       fontFamily: 'Arial, sans-serif', fontSize: 20, fontWeight: 'bold', fill: 0xffffff,
     });
-    btnText.anchor.set(0.5); btnText.x = W / 2; btnText.y = 410;
+    btnText.anchor.set(0.5); btnText.x = W / 2; btnText.y = 420;
     p.addChild(btnText);
 
     this.gameOverPanel = p;
@@ -665,6 +721,7 @@ export class Game {
   _updateUI() {
     this.scoreText.text = `${gameStore.score}`;
     this.highScoreText.text = `🏆 ${gameStore.highScore}`;
+
     this.comboText.text = gameStore.combo >= 3
       ? `🔥 ${gameStore.combo}连击! ${gameStore.comboText}`
       : '';
@@ -672,13 +729,9 @@ export class Game {
     const count = this.balls.filter(b => b.body && !b._markedForRemoval).length;
     this.ballCountText.text = count > 4 ? `容器内 ${count} 个球` : '';
 
-    // 瞄准引导线
     this._updateGuideLine();
-
-    // 预览球
     this._updatePreview();
 
-    // 合成出生球的缩放恢复
     for (const b of this.balls) {
       if (!b._markedForRemoval && b.display.scale.x > 1.01) {
         b.display.scale.set(b.display.scale.x + (1 - b.display.scale.x) * 0.15);
@@ -696,7 +749,6 @@ export class Game {
     const startY = DROP.spawnY + BALL_LEVELS[gameStore.nextBallLevel].radius;
     const endY = CONTAINER.y + CONTAINER.height - 20;
 
-    // 虚线引导
     g.lineStyle(1.5, 0xffffff, 0.12);
     const dash = 6, gap = 6;
     let dy = startY;
@@ -707,14 +759,12 @@ export class Game {
       dy = to + gap;
     }
 
-    // 底部小箭头
     const ay = endY;
     g.moveTo(x - 5, ay - 10); g.lineTo(x, ay); g.lineTo(x + 5, ay - 10);
   }
 
   _updatePreview() {
     const level = gameStore.nextBallLevel;
-    // 只在等级变化时重绘，避免每帧创建新对象
     if (level === this._lastPreviewLevel) return;
     this._lastPreviewLevel = level;
 
@@ -724,14 +774,12 @@ export class Game {
 
     const pr = Math.min(def.radius, 18);
 
-    // 辉光环
     const ringBreath = 0.2 + 0.15 * Math.sin(this._animTime * 0.005);
     this._previewRing.lineStyle(2, def.glow, ringBreath);
     this._previewRing.drawCircle(0, 0, pr + 6);
     this._previewRing.lineStyle(0);
     this.previewBall.addChild(this._previewRing);
 
-    // 小球
     const g = new PIXI.Graphics();
     g.beginFill(0x000000, 0.12);
     g.drawEllipse(pr * 0.12, pr * 0.18, pr, pr * 0.9);

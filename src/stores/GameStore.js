@@ -64,6 +64,7 @@ class GameStore {
     this.isAiming = false;
     this.aimX = 195;
     this.combo = 0;
+    this._maxCombo = 0;
     this.lastMergeTime = 0;
     this.maxLevel = 0;
     this.totalMerges = 0;
@@ -82,12 +83,22 @@ class GameStore {
     return multiplied; // 返回实际得分(含倍率)供弹窗显示
   }
 
+  /** 当次连击最高值 */
+  get maxCombo() {
+    return this._maxCombo || 0;
+  }
+
+  _maxCombo = 0;
+
   recordMerge() {
     const now = Date.now();
-    if (now - this.lastMergeTime < 1500) {
+    if (now - this.lastMergeTime < 1800) {
       this.combo += 1;
     } else {
       this.combo = 1;
+    }
+    if (this.combo > this._maxCombo) {
+      this._maxCombo = this.combo;
     }
     this.lastMergeTime = now;
     this.totalMerges += 1;

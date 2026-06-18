@@ -4,17 +4,17 @@
 
 // ---- 画布 ----
 export const CANVAS_WIDTH = 390;
-export const CANVAS_HEIGHT = 700;
+export const CANVAS_HEIGHT = 750;
 
 // ---- 视觉主题色 ----
 export const THEME = {
-  bgTop: '#07071a',          // 背景顶部
-  bgBottom: '#0f1632',      // 背景底部
-  containerBg: 0x0c1330,    // 容器底色
-  containerBorder: 0x2a3a7a, // 容器边框
-  containerGlow: 0x4466cc,  // 容器外侧辉光
+  bgTop: '#0a0a23',          // 背景顶部
+  bgBottom: '#141838',      // 背景底部
+  containerBg: 0x0e1738,    // 容器底色
+  containerBorder: 0x3355aa, // 容器边框
+  containerGlow: 0x5577dd,  // 容器外侧辉光
   accent: 0xffd700,         // 强调色 (金)
-  danger: 0xff3b3b,         // 危险色
+  danger: 0xff4444,         // 危险色
   textPrimary: 0xffffff,
   textSecondary: 0x8899cc,
   textDim: 0x556688,
@@ -35,12 +35,12 @@ export const DANGER_LINE_Y = CONTAINER.y + 55;
 
 // ---- 物理 ----
 export const PHYSICS = {
-  gravity: 2.5,
-  ballFriction: 0.4,
-  ballRestitution: 0.15,
-  ballDensity: 0.002,
+  gravity: 2.2,
+  ballFriction: 0.3,
+  ballRestitution: 0.28,
+  ballDensity: 0.0018,
   wallFriction: 0.6,
-  wallRestitution: 0.1,
+  wallRestitution: 0.15,
 };
 
 // ---- 球体等级 ----
@@ -70,8 +70,8 @@ export const DROP = {
 
 // ---- 合成 ----
 export const MERGE = {
-  cooldown: 80,
-  minVelocityForMerge: 0.3,
+  cooldown: 60,
+  minVelocityForMerge: 0.25,
 };
 
 // ---- 游戏结束 ----
@@ -81,17 +81,20 @@ export const GAME_OVER = {
 
 // ---- 特效 ----
 export const EFFECTS = {
-  particleCount: 16,
-  particleSpeed: 6,
-  particleLife: 700,
-  shakeIntensity: 5,
-  shakeDuration: 280,
-  popupDuration: 900,
+  particleCount: 22,
+  particleSpeed: 7,
+  particleLife: 800,
+  shakeIntensity: 6,
+  shakeDuration: 300,
+  popupDuration: 1000,
 };
+
+// ---- 里程碑等级 (合成到这些等级触发特殊庆祝) ----
+export const MILESTONE_LEVELS = [5, 7, 9, 10]; // 蓝莓/紫水晶/草莓/宇宙
 
 // ---- 连击 ----
 export const COMBO = {
-  window: 1500,
-  multiplier: 0.5,
+  window: 1800,
+  multiplier: 0.6,
   maxMultiplier: 5,
 };
