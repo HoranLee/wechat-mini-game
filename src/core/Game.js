@@ -359,7 +359,15 @@ export class Game {
   _updateDangerLine() {
     const g = this._dangerLineGfx;
     g.clear();
-    const breath = 0.4 + 0.25 * Math.sin(this._animTime * 0.004);
+
+    // 危急时呼吸加速、辉光增强
+    const danger = gameStore.isInDanger;
+    const freq = danger ? 0.012 : 0.004;          // 3x 呼吸频率
+    const baseAlpha = danger ? 0.65 : 0.4;         // 更高基础透明度
+    const amplitude = danger ? 0.35 : 0.25;        // 更大幅度
+    const glowAlpha = danger ? 0.45 : 0.2;         // 辉光翻倍
+
+    const breath = baseAlpha + amplitude * Math.sin(this._animTime * freq);
     g.lineStyle(2, THEME.danger, breath);
     const { x, width } = CONTAINER;
     const dl = 12, gap = 7;
@@ -370,7 +378,7 @@ export class Game {
       g.lineTo(end, DANGER_LINE_Y);
       dx = end + gap;
     }
-    g.lineStyle(4, THEME.danger, breath * 0.2);
+    g.lineStyle(4, THEME.danger, breath * glowAlpha);
     dx = x;
     while (dx < x + width) {
       const end = Math.min(dx + dl, x + width);
