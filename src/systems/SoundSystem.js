@@ -6,10 +6,18 @@ let ctx = null;
 
 function getCtx() {
   if (!ctx) {
-    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) ctx = new AC();
+    } catch (_) {
+      // 微信环境可能不支持 WebAudio，静默降级
+      ctx = null;
+    }
   }
-  // 某些浏览器需要 resume
-  if (ctx.state === 'suspended') ctx.resume();
+  // resume (浏览器可能在用户手势前挂起)
+  if (ctx && ctx.state === 'suspended') {
+    try { ctx.resume(); } catch (_) { /**/ }
+  }
   return ctx;
 }
 

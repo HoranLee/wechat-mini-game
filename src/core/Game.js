@@ -71,8 +71,7 @@ export class Game {
 
     // 1. 渐变背景
     const bgGradient = this._createGradient(W, H, THEME.bgTop, THEME.bgBottom);
-    const bgSprite = new PIXI.Sprite(bgGradient);
-    this.bgLayer.addChild(bgSprite);
+    this._applyBackgroundGradient(bgGradient);
 
     // 2. 微网格
     const grid = new PIXI.Graphics();
@@ -136,6 +135,41 @@ export class Game {
   }
 
   _createGradient(w, h, topColor, bottomColor) {
+    // 微信环境: 直接用 PIXI Graphics 画渐变 (避免 canvas 纹理兼容问题)
+    const isWx = typeof wx !== 'undefined' && wx.createCanvas;
+    if (isWx) {
+      const g = new PIXI.Graphics();
+      const steps = 60;
+      const colorToHex = (c) => {
+        if (typeof c === 'string') return parseInt(c.replace('#', ''), 16);
+        return c;
+      };
+      const hexTop = colorToHex(topColor);
+      const hexMid = 0x0b1330;
+      const hexBot = colorToHex(bottomColor);
+      const lerpColor = (a, b, t) => {
+        const ar = (a >> 16) & 0xff, ag = (a >> 8) & 0xff, ab = a & 0xff;
+        const br = (b >> 16) & 0xff, bg = (b >> 8) & 0xff, bb = b & 0xff;
+        const r = Math.round(ar + (br - ar) * t);
+        const gv = Math.round(ag + (bg - ag) * t);
+        const bv = Math.round(ab + (bb - ab) * t);
+        return (r << 16) | (gv << 8) | bv;
+      };
+      const stripH = Math.ceil(h / steps);
+      for (let i = 0; i < steps; i++) {
+        const t = i / (steps - 1);
+        const midT = t < 0.5 ? t * 2 : (t - 0.5) * 2;
+        const color = t < 0.5
+          ? lerpColor(hexTop, hexMid, midT)
+          : lerpColor(hexMid, hexBot, midT);
+        g.beginFill(color);
+        g.drawRect(0, i * stripH, w, stripH + 1);
+        g.endFill();
+      }
+      return g;
+    }
+
+    // 浏览器环境: canvas gradient
     const canvas = document.createElement('canvas');
     canvas.width = w;
     canvas.height = h;
@@ -147,6 +181,16 @@ export class Game {
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, w, h);
     return PIXI.Texture.from(canvas);
+  }
+
+  _applyBackgroundGradient(gradient) {
+    // 微信环境返回 Graphics，浏览器返回 Texture
+    if (gradient instanceof PIXI.Graphics) {
+      this.bgLayer.addChild(gradient);
+    } else {
+      const sprite = new PIXI.Sprite(gradient);
+      this.bgLayer.addChild(sprite);
+    }
   }
 
   // ==================== 碰撞 ====================

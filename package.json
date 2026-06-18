@@ -4,7 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "vite",
+    "build": "vite build",
+    "build:wechat": "vite build --config vite.wechat.config.js",
+    "preview": "vite preview"
   },
   "keywords": [],
   "author": "",
