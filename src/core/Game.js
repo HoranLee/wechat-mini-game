@@ -5,6 +5,7 @@ import { Container } from '../entities/Container.js';
 import { Ball } from '../entities/Ball.js';
 import { MergeSystem } from '../systems/MergeSystem.js';
 import { EffectSystem } from '../systems/EffectSystem.js';
+import { SoundSystem } from '../systems/SoundSystem.js';
 import {
   CANVAS_WIDTH, CANVAS_HEIGHT,
   CONTAINER, DANGER_LINE_Y, PHYSICS,
@@ -36,7 +37,10 @@ export class Game {
 
     this._animTime = 0;
     this._lastPreviewLevel = -1;
+    this._tutorialStep = -1; // -1=已关闭, 0/1/2=步骤
+    this._isPaused = false;
 
+    this._setupPauseResume();
     this.app.ticker.add(() => this._gameLoop());
   }
 
@@ -184,6 +188,59 @@ export class Game {
     this._releaseBall();
   }
 
+  // ==================== 暂停/恢复 ====================
+
+  _setupPauseResume() {
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        this._pause();
+      } else {
+        this._resume();
+      }
+    });
+  }
+
+  _pause() {
+    if (gameStore.gameState !== 'playing' || this._isPaused) return;
+    this._isPaused = true;
+    this._pausedTimeScale = this.engine.timing.timeScale;
+    this.engine.timing.timeScale = 0; // 冻结物理
+
+    // 显示暂停遮罩
+    if (!this._pauseOverlay) {
+      this._pauseOverlay = new PIXI.Container();
+      const bg = new PIXI.Graphics();
+      bg.beginFill(0x000000, 0.6);
+      bg.drawRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+      bg.endFill();
+      this._pauseOverlay.addChild(bg);
+      const text = new PIXI.Text('已暂停', {
+        fontFamily: 'Arial, sans-serif', fontSize: 32, fontWeight: '900', fill: 0xffffff,
+        dropShadow: true, dropShadowColor: 0x000000, dropShadowBlur: 6, dropShadowDistance: 0,
+      });
+      text.anchor.set(0.5);
+      text.x = CANVAS_WIDTH / 2; text.y = CANVAS_HEIGHT / 2;
+      this._pauseOverlay.addChild(text);
+      const hint = new PIXI.Text('返回页面继续游戏', {
+        fontFamily: 'Arial, sans-serif', fontSize: 14, fill: 0x8899cc,
+      });
+      hint.anchor.set(0.5);
+      hint.x = CANVAS_WIDTH / 2; hint.y = CANVAS_HEIGHT / 2 + 40;
+      this._pauseOverlay.addChild(hint);
+    }
+    this.uiLayer.addChild(this._pauseOverlay);
+  }
+
+  _resume() {
+    if (!this._isPaused) return;
+    this._isPaused = false;
+    this.engine.timing.timeScale = this._pausedTimeScale || 1;
+
+    if (this._pauseOverlay && this._pauseOverlay.parent) {
+      this._pauseOverlay.parent.removeChild(this._pauseOverlay);
+    }
+  }
+
   _getCanvasX(e) {
     const rect = this.app.view.getBoundingClientRect();
     return (e.clientX - rect.left) * (CANVAS_WIDTH / rect.width);
@@ -230,6 +287,8 @@ export class Game {
     this._dropCooldownRemaining = DROP.cooldown;
     this._canSpawn = false;
     gameStore.containerBallCount += 1;
+
+    SoundSystem.playDrop();
   }
 
   // ==================== 主循环 ====================
@@ -408,12 +467,16 @@ export class Game {
       this.effectSystem.emitShockwave(x, y, def.glow, newBall.level >= 9 ? 4 : 3);
     }
 
+    // 音效
+    SoundSystem.playMerge(newBall.level);
+
     // 里程碑庆祝
     if (MILESTONE_LEVELS.includes(newBall.level)) {
       this.effectSystem.emitMergeParticles(x, y, 0xFFD700, 40, 1.5);
       this.effectSystem.emitMergeParticles(x, y, 0xFFFFFF, 25, 1.2);
       this.effectSystem.shakeScreen(12, 500);
       this._celebrateMilestone(y);
+      SoundSystem.playMilestone(newBall.level);
     }
 
     // 普通震动 (里程碑不重复)
@@ -444,11 +507,17 @@ export class Game {
     this._lastPreviewLevel = -1;
 
     this._beginAim(CANVAS_WIDTH / 2);
+
+    // 首次游戏显示引导
+    if (!localStorage.getItem('tutorial_done_v1')) {
+      this._showTutorial(0);
+    }
   }
 
   _endGame() {
     gameStore.endGame();
     this.gameOverPanel.visible = true;
+    SoundSystem.playGameOver();
     this._finalScoreText.text = `${gameStore.score}`;
 
     const isNewRecord = gameStore.score >= gameStore.highScore && gameStore.score > 0;
@@ -500,6 +569,136 @@ export class Game {
       }
     };
     this.app.ticker.add(ticker);
+  }
+
+  // ==================== 新手引导 ====================
+
+  _showTutorial(step) {
+    if (this._tutorialOverlay) {
+      this.uiLayer.removeChild(this._tutorialOverlay);
+      this._tutorialOverlay.destroy({ children: true });
+    }
+
+    this._tutorialStep = step;
+    const W = CANVAS_WIDTH, H = CANVAS_HEIGHT;
+    const c = new PIXI.Container();
+    this._tutorialOverlay = c;
+
+    // 半透明遮罩
+    const mask = new PIXI.Graphics();
+    mask.beginFill(0x000000, 0.65);
+    mask.drawRect(0, 0, W, H);
+    mask.endFill();
+    c.addChild(mask);
+
+    // 镂空高亮区域
+    const hole = new PIXI.Graphics();
+    hole.beginFill(0xFFFFFF, 0.08);
+    if (step === 0 || step === 1) {
+      hole.drawRoundedRect(CONTAINER.x, CONTAINER.y - 20, CONTAINER.width, 60, 10);
+    } else {
+      hole.drawRoundedRect(CONTAINER.x + 40, CONTAINER.y + 80, CONTAINER.width - 80, 120, 10);
+    }
+    hole.endFill();
+    c.addChild(hole);
+
+    // 手势图标
+    const handEmoji = step === 0 ? '👆' : step === 1 ? '👇' : '✨';
+    const handIcon = new PIXI.Text(handEmoji, { fontSize: 42, align: 'center' });
+    handIcon.anchor.set(0.5);
+    handIcon.x = W / 2;
+    handIcon.y = step === 2 ? CONTAINER.y + 140 : CONTAINER.y + 10;
+    c.addChild(handIcon);
+
+    // 步骤标题
+    const titles = [
+      '拖动瞄准',
+      '松手释放',
+      '碰撞合成',
+    ];
+    const title = new PIXI.Text(titles[step], {
+      fontFamily: 'Arial, sans-serif', fontSize: 28, fontWeight: '900',
+      fill: 0xffffff,
+      dropShadow: true, dropShadowColor: 0x000000, dropShadowBlur: 6, dropShadowDistance: 0,
+    });
+    title.anchor.set(0.5); title.x = W / 2; title.y = H / 2 + 30;
+    c.addChild(title);
+
+    // 描述
+    const descs = [
+      '移动手指或鼠标，控制球左右位置',
+      '松开手指让球掉落进容器',
+      '相同球碰撞会自动合成更大的球！',
+    ];
+    const desc = new PIXI.Text(descs[step], {
+      fontFamily: 'Arial, sans-serif', fontSize: 14, fill: 0x8899cc, align: 'center',
+    });
+    desc.anchor.set(0.5); desc.x = W / 2; desc.y = H / 2 + 60;
+    c.addChild(desc);
+
+    // 步骤指示器
+    for (let i = 0; i < 3; i++) {
+      const dot = new PIXI.Graphics();
+      dot.beginFill(i === step ? 0xffffff : 0x556688, i === step ? 1 : 0.4);
+      dot.drawCircle(0, 0, 4);
+      dot.endFill();
+      dot.x = W / 2 - 16 + i * 16; dot.y = H / 2 + 95;
+      c.addChild(dot);
+    }
+
+    // 按钮
+    const isLast = step === 2;
+    const btn = new PIXI.Graphics();
+    btn.beginFill(isLast ? 0x69DB7C : 0x4466cc);
+    btn.drawRoundedRect(-60, -20, 120, 40, 20);
+    btn.endFill();
+    btn.beginFill(0xFFFFFF, 0.08);
+    btn.drawRoundedRect(-60, -20, 120, 20, 20);
+    btn.endFill();
+    btn.x = W / 2; btn.y = H / 2 + 140;
+    btn.interactive = true; btn.buttonMode = true;
+    btn.on('pointerdown', () => {
+      SoundSystem.init();
+      SoundSystem.playClick();
+      if (isLast) {
+        this._dismissTutorial();
+      } else {
+        this._showTutorial(step + 1);
+      }
+    });
+    c.addChild(btn);
+
+    const btnText = new PIXI.Text(isLast ? '开始玩!' : '下一步', {
+      fontFamily: 'Arial, sans-serif', fontSize: 18, fontWeight: 'bold', fill: 0xffffff,
+    });
+    btnText.anchor.set(0.5); btnText.x = W / 2; btnText.y = H / 2 + 140;
+    c.addChild(btnText);
+
+    // 跳过按钮
+    const skip = new PIXI.Text('跳过引导', {
+      fontFamily: 'Arial, sans-serif', fontSize: 13, fill: 0x667799,
+    });
+    skip.anchor.set(0.5);
+    skip.x = W / 2; skip.y = H / 2 + 185;
+    skip.interactive = true; skip.buttonMode = true;
+    skip.on('pointerdown', () => {
+      SoundSystem.init();
+      this._dismissTutorial();
+    });
+    c.addChild(skip);
+
+    this.uiLayer.addChild(c);
+  }
+
+  _dismissTutorial() {
+    this._tutorialStep = -1;
+    if (this._tutorialOverlay) {
+      this.uiLayer.removeChild(this._tutorialOverlay);
+      this._tutorialOverlay.destroy({ children: true });
+      this._tutorialOverlay = null;
+    }
+    try { localStorage.setItem('tutorial_done_v1', '1'); } catch (_) { /* ignore */ }
+    SoundSystem.init(); // 解锁 AudioContext
   }
 
   _cleanAllBalls() {
