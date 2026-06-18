@@ -9,7 +9,7 @@ import { SoundSystem } from '../systems/SoundSystem.js';
 import {
   CANVAS_WIDTH, CANVAS_HEIGHT,
   CONTAINER, DANGER_LINE_Y, PHYSICS,
-  BALL_LEVELS, DROP, GAME_OVER, THEME,
+  BALL_LEVELS, MAX_LEVEL, DROP, GAME_OVER, THEME,
   MILESTONE_LEVELS,
 } from '../config/constants.js';
 
@@ -37,8 +37,12 @@ export class Game {
 
     this._animTime = 0;
     this._lastPreviewLevel = -1;
-    this._tutorialStep = -1; // -1=已关闭, 0/1/2=步骤
+    this._tutorialStep = -1;
     this._isPaused = false;
+    this._bulletTimeRemaining = 0;    // 子弹时间剩余
+    this._displayScore = 0;           // 显示分数 (tween 目标)
+    this._realScore = 0;              // 实际分数
+    this._bombCount = 0;              // 炸弹道具数
 
     this._setupPauseResume();
     this.app.ticker.add(() => this._gameLoop());
@@ -150,6 +154,14 @@ export class Game {
   _setupCollisions() {
     Matter.Events.on(this.engine, 'collisionStart', (event) => {
       for (const pair of event.pairs) {
+        // 墙壁碰撞辉光
+        const isWallA = pair.bodyA.isStatic && !pair.bodyA._ballRef;
+        const isWallB = pair.bodyB.isStatic && !pair.bodyB._ballRef;
+        if ((isWallA || isWallB) && pair.collision && pair.collision.supports[0]) {
+          const cp = pair.collision.supports[0];
+          this.effectSystem.emitMergeParticles(cp.x, cp.y, 0x5577dd, 2, 0.25);
+        }
+
         this.mergeSystem.checkCollision(
           pair.bodyA, pair.bodyB,
           pair.collision ? pair.collision.supports[0] || null : null
@@ -303,6 +315,16 @@ export class Game {
     const physDt = Math.min(dt, 16.667);
     Matter.Engine.update(this.engine, physDt);
 
+    // 1b. 子弹时间恢复
+    if (this._bulletTimeRemaining > 0) {
+      this._bulletTimeRemaining -= dt;
+      const target = this._bulletTimeRemaining > 0 ? 0.3 : 1;
+      this.engine.timing.timeScale += (target - this.engine.timing.timeScale) * 0.1;
+      if (this._bulletTimeRemaining <= 0) {
+        this.engine.timing.timeScale = 1;
+      }
+    }
+
     // 2. 合成
     this.mergeSystem.processMerges();
 
@@ -332,6 +354,9 @@ export class Game {
       }
       ball.syncDisplay();
     }
+
+    // 5b. 下落球拖尾粒子
+    this._emitDropTrail(dt);
 
     // 6. 检查入容器
     this._checkBallEntry();
@@ -374,6 +399,22 @@ export class Game {
     }
   }
 
+  _emitDropTrail(_dt) {
+    // 为正在下落但未入容器的球生成拖尾
+    for (const ball of this.balls) {
+      if (ball.isDropped && !ball.isInContainer && ball.body && !ball._markedForRemoval) {
+        // 每 3 帧大约一个粒子
+        if (Math.random() < 0.35) {
+          this.effectSystem.emitMergeParticles(
+            ball.body.position.x,
+            ball.body.position.y,
+            ball.color, 1, 0.2
+          );
+        }
+      }
+    }
+  }
+
   _checkBallEntry() {
     for (const ball of this.balls) {
       if (ball.isDropped && !ball.isInContainer) {
@@ -403,6 +444,16 @@ export class Game {
       if (!gameStore.isInDanger) {
         gameStore.isInDanger = true;
         gameStore.dangerStartTime = performance.now();
+        this._dangerHeartbeatTimer = 0;
+      }
+      // 暗角随危险时间加深
+      this._updateDangerVignette();
+      // 心跳音效 (每 0.8s 一次，强度递增)
+      this._dangerHeartbeatTimer += this.app.ticker.deltaMS;
+      const intensity = Math.min(1, (performance.now() - gameStore.dangerStartTime) / GAME_OVER.dangerTime);
+      if (this._dangerHeartbeatTimer > 800 - intensity * 400) {
+        this._dangerHeartbeatTimer = 0;
+        SoundSystem.playHeartbeat(intensity);
       }
       if (performance.now() - gameStore.dangerStartTime >= GAME_OVER.dangerTime) {
         this._endGame();
@@ -411,7 +462,26 @@ export class Game {
       if (gameStore.isInDanger) {
         gameStore.isInDanger = false;
         gameStore.dangerStartTime = 0;
+        this._dangerVignette.visible = false;
       }
+    }
+  }
+
+  _updateDangerVignette() {
+    if (!gameStore.isInDanger) return;
+    const elapsed = performance.now() - gameStore.dangerStartTime;
+    const intensity = Math.min(1, elapsed / GAME_OVER.dangerTime);
+    const g = this._dangerVignette;
+    g.visible = true;
+    g.clear();
+    // 顶部红色渐变暗角
+    const h = CONTAINER.y + CONTAINER.height;
+    for (let i = 0; i < 15; i++) {
+      const t = i / 15;
+      const alpha = intensity * t * 0.5;
+      g.beginFill(0xFF2222, alpha);
+      g.drawRect(0, CONTAINER.y - 20 + i * 3, CANVAS_WIDTH, 3);
+      g.endFill();
     }
   }
 
@@ -458,17 +528,34 @@ export class Game {
 
     const def = BALL_LEVELS[newBall.level];
 
+    // 完美合并判定 — 合成出 Lv4+ 且连击 ≥3 视为 Perfect
+    const isPerfect = newBall.level >= 4 && gameStore.combo >= 3;
+    if (isPerfect) {
+      this.effectSystem.flashScreen(200);
+      this.effectSystem.emitMergeParticles(x, y, 0xFFD700, 30, 1.8);
+      this.effectSystem.showScorePopup(x, y - 20, score, '✨ PERFECT! ✨');
+    } else {
+      this.effectSystem.showScorePopup(x, y, score, gameStore.comboText);
+    }
+
     this.effectSystem.emitMergeParticles(x, y, def.body);
     this.effectSystem.emitMergeParticles(x, y, 0xFFFFFF, 6, 0.7);
-    this.effectSystem.showScorePopup(x, y, score, gameStore.comboText);
 
-    // 冲击波
+    // 冲击波 + 闪白 + 子弹时间
     if (newBall.level >= 6) {
       this.effectSystem.emitShockwave(x, y, def.glow, newBall.level >= 9 ? 4 : 3);
+      this.effectSystem.flashScreen(newBall.level >= 8 ? 180 : 120);
+      if (newBall.level >= 7) {
+        this._bulletTimeRemaining = 500;
+        this.engine.timing.timeScale = 0.3;
+      }
     }
 
     // 音效
     SoundSystem.playMerge(newBall.level);
+
+    // 追踪实际分数 (MergeSystem 已经调过 addScore)
+    this._realScore = gameStore.score;
 
     // 里程碑庆祝
     if (MILESTONE_LEVELS.includes(newBall.level)) {
@@ -488,6 +575,12 @@ export class Game {
       }
     }
 
+    // 每 10 次合成获得一个炸弹
+    if (gameStore.totalMerges > 0 && gameStore.totalMerges % 10 === 0) {
+      this._bombCount += 1;
+      this._bombCountText.text = `${this._bombCount}`;
+    }
+
     if (navigator.vibrate) {
       navigator.vibrate(Math.min(newBall.level * 5, 50));
     }
@@ -505,6 +598,8 @@ export class Game {
     this._canSpawn = true;
     this._animTime = 0;
     this._lastPreviewLevel = -1;
+    this._bombCount = 0;
+    this._bombCountText.text = '0';
 
     this._beginAim(CANVAS_WIDTH / 2);
 
@@ -532,10 +627,53 @@ export class Game {
       ? `合并 ${gameStore.totalMerges} 次 · 最高 ${gameStore.maxCombo} 连击`
       : '';
 
+    // "差一点就合成" 钩子
+    const nextMilestone = MILESTONE_LEVELS.find(l => l > gameStore.maxLevel);
+    if (nextMilestone !== undefined) {
+      const nextDef = BALL_LEVELS[nextMilestone];
+      this._almostText.text = `💡 差 ${nextMilestone - gameStore.maxLevel} 级合成 ${nextDef.emoji} ${nextDef.name}!`;
+    } else if (gameStore.maxLevel < MAX_LEVEL) {
+      const nextDef = BALL_LEVELS[gameStore.maxLevel + 1];
+      this._almostText.text = `💡 试试合成 ${nextDef.emoji} ${nextDef.name}吧!`;
+    } else {
+      this._almostText.text = '🌟 你已合成最高等级！传奇！';
+    }
+
     this._finalScoreText.style.fill = isNewRecord ? THEME.accent : 0xffffff;
   }
 
   _restart() { this._startGame(); }
+
+  _useBomb() {
+    if (this._bombCount <= 0 || gameStore.gameState !== 'playing') return;
+    this._bombCount -= 1;
+    this._bombCountText.text = `${this._bombCount}`;
+    SoundSystem.playClick();
+
+    // 消除容器内最顶部的 3 个球
+    const containerBalls = this.balls.filter(b =>
+      b.isInContainer && b.body && !b._markedForRemoval
+    );
+    // 按 Y 坐标排序 (顶部 = Y 最小)
+    containerBalls.sort((a, b) => a.body.position.y - b.body.position.y);
+    const targets = containerBalls.slice(0, 3);
+
+    for (const ball of targets) {
+      // 爆炸粒子
+      this.effectSystem.emitMergeParticles(
+        ball.body.position.x, ball.body.position.y,
+        ball.color, 18, 1.0
+      );
+      ball.markForRemoval();
+    }
+
+    if (targets.length > 0 && navigator.vibrate) {
+      navigator.vibrate(30);
+    }
+
+    // 闪烁效果
+    this.effectSystem.flashScreen(100);
+  }
 
   _celebrateMilestone(y) {
     const text = new PIXI.Text('🎉 里程碑达成!', {
@@ -707,6 +845,20 @@ export class Game {
     this.mergeSystem.reset();
     this.effectSystem.reset();
     this.stage.x = 0; this.stage.y = 0;
+    // 清理残留遮罩
+    this._dangerVignette.visible = false;
+    this._displayScore = 0;
+    this._realScore = 0;
+    this._bulletTimeRemaining = 0;
+    this.engine.timing.timeScale = 1;
+    // 清理庆祝动画 ticker
+    if (this._tutorialOverlay) {
+      try { this.uiLayer.removeChild(this._tutorialOverlay); this._tutorialOverlay.destroy({ children: true }); } catch (_) { /**/ }
+      this._tutorialOverlay = null;
+    }
+    if (this._pauseOverlay && this._pauseOverlay.parent) {
+      this._pauseOverlay.parent.removeChild(this._pauseOverlay);
+    }
   }
 
   // ==================== UI 构建 ====================
@@ -795,6 +947,50 @@ export class Game {
     // 瞄准引导线
     this._guideLine = new PIXI.Graphics();
     this.uiLayer.addChild(this._guideLine);
+
+    // 危险暗角遮罩
+    this._dangerVignette = new PIXI.Graphics();
+    this._dangerVignette.visible = false;
+    this.uiLayer.addChild(this._dangerVignette);
+
+    // 静音按钮
+    this._muteBtn = new PIXI.Container();
+    this._muteBtn.x = CANVAS_WIDTH - 32; this._muteBtn.y = CONTAINER.y - 52;
+    const muteBg = new PIXI.Graphics();
+    muteBg.beginFill(0x000000, 0.3);
+    muteBg.drawRoundedRect(-14, -12, 28, 24, 6);
+    muteBg.endFill();
+    this._muteBtn.addChild(muteBg);
+    this._muteIcon = new PIXI.Text('🔊', { fontSize: 14 });
+    this._muteIcon.anchor.set(0.5);
+    this._muteBtn.addChild(this._muteIcon);
+    this._muteBtn.interactive = true; this._muteBtn.buttonMode = true;
+    this._muteBtn.on('pointerdown', () => {
+      const muted = SoundSystem.toggleMute();
+      this._muteIcon.text = muted ? '🔇' : '🔊';
+      SoundSystem.playClick();
+    });
+    this.uiLayer.addChild(this._muteBtn);
+
+    // 炸弹按钮
+    this._bombBtn = new PIXI.Container();
+    this._bombBtn.x = CANVAS_WIDTH - 68; this._bombBtn.y = CONTAINER.y - 52;
+    const bombBg = new PIXI.Graphics();
+    bombBg.beginFill(0x000000, 0.3);
+    bombBg.drawRoundedRect(-18, -12, 36, 24, 6);
+    bombBg.endFill();
+    this._bombBtn.addChild(bombBg);
+    this._bombIcon = new PIXI.Text('💣', { fontSize: 13 });
+    this._bombIcon.anchor.set(0.5);
+    this._bombBtn.addChild(this._bombIcon);
+    this._bombCountText = new PIXI.Text('0', {
+      fontFamily: 'Arial, sans-serif', fontSize: 10, fill: 0xffffff,
+    });
+    this._bombCountText.anchor.set(0.5); this._bombCountText.y = 13;
+    this._bombBtn.addChild(this._bombCountText);
+    this._bombBtn.interactive = true; this._bombBtn.buttonMode = true;
+    this._bombBtn.on('pointerdown', () => this._useBomb());
+    this.uiLayer.addChild(this._bombBtn);
 
     // 面板
     this._createStartPanel();
@@ -901,6 +1097,15 @@ export class Game {
     this._finalStatsText.anchor.set(0.5); this._finalStatsText.x = W / 2; this._finalStatsText.y = 346;
     p.addChild(this._finalStatsText);
 
+    // "差一点就合成" 钩子
+    this._almostText = new PIXI.Text('', {
+      fontFamily: 'Arial, sans-serif', fontSize: 14, fill: 0xFFA502,
+      dropShadow: true, dropShadowColor: 0x000000, dropShadowBlur: 3, dropShadowDistance: 0,
+      align: 'center',
+    });
+    this._almostText.anchor.set(0.5); this._almostText.x = W / 2; this._almostText.y = 372;
+    p.addChild(this._almostText);
+
     const btn = new PIXI.Graphics();
     btn.beginFill(0x4466cc);
     btn.drawRoundedRect(-90, -24, 180, 48, 24);
@@ -919,6 +1124,27 @@ export class Game {
     btnText.anchor.set(0.5); btnText.x = W / 2; btnText.y = 420;
     p.addChild(btnText);
 
+    // 分享按钮
+    const shareBtn = new PIXI.Text('📤 炫耀战绩', {
+      fontFamily: 'Arial, sans-serif', fontSize: 14, fill: 0x8899cc,
+    });
+    shareBtn.anchor.set(0.5); shareBtn.x = W / 2; shareBtn.y = 470;
+    shareBtn.interactive = true; shareBtn.buttonMode = true;
+    shareBtn.on('pointerdown', () => {
+      const shareLvl = BALL_LEVELS[gameStore.maxLevel];
+      const msg = `🫧 合成球球\n🏆 得分: ${gameStore.score}\n🔥 最高合成: ${shareLvl.emoji} ${shareLvl.name}\n💥 连击: ${gameStore.maxCombo}次\n来挑战我吧!`;
+      if (navigator.share) {
+        navigator.share({ title: '合成球球', text: msg });
+      } else {
+        // 复制到剪贴板
+        navigator.clipboard?.writeText(msg).then(() => {
+          shareBtn.text = '✅ 已复制!';
+          setTimeout(() => { shareBtn.text = '📤 炫耀战绩'; }, 2000);
+        }).catch(() => {});
+      }
+    });
+    p.addChild(shareBtn);
+
     this.gameOverPanel = p;
     this.uiLayer.addChild(p);
   }
@@ -926,7 +1152,13 @@ export class Game {
   // ==================== UI 更新 ====================
 
   _updateUI() {
-    this.scoreText.text = `${gameStore.score}`;
+    // 分数 tween 动画 — 让数字滚动而不是瞬间跳变
+    if (Math.abs(this._displayScore - this._realScore) > 1) {
+      this._displayScore += (this._realScore - this._displayScore) * 0.25;
+    } else {
+      this._displayScore = this._realScore;
+    }
+    this.scoreText.text = `${Math.round(this._displayScore)}`;
     this.highScoreText.text = `🏆 ${gameStore.highScore}`;
 
     this.comboText.text = gameStore.combo >= 3

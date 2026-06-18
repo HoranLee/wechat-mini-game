@@ -153,6 +153,28 @@ export class EffectSystem {
     this._popups.push({ container: c, x, y, elapsed: 0, duration: EFFECTS.popupDuration });
   }
 
+  /** 全屏闪白 */
+  flashScreen(duration = 120) {
+    const flash = new PIXI.Graphics();
+    flash.beginFill(0xFFFFFF, 0.35);
+    flash.drawRect(0, 0, 390, 750);
+    flash.endFill();
+    this.uiLayer.addChild(flash);
+    // 快速衰减
+    const start = performance.now();
+    const ticker = () => {
+      const t = (performance.now() - start) / duration;
+      if (t >= 1) {
+        this.uiLayer.removeChild(flash);
+        flash.destroy();
+        return;
+      }
+      flash.alpha = 0.35 * (1 - t);
+      requestAnimationFrame(ticker);
+    };
+    ticker();
+  }
+
   /** 屏幕震动 */
   shakeScreen(intensity = EFFECTS.shakeIntensity, duration = EFFECTS.shakeDuration) {
     if (intensity > this._shakeAmount || this._shakeElapsed <= 0) {

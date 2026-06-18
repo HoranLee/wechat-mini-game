@@ -48,24 +48,34 @@ function playChord(freqs, duration, volume = 0.1) {
 // ========== 公开 API ==========
 
 export const SoundSystem = {
+  _muted: false,
+
+  get muted() { return this._muted; },
+
+  toggleMute() {
+    this._muted = !this._muted;
+    return this._muted;
+  },
+
   /** 掉落音 — 短促低音 */
   playDrop() {
+    if (this._muted) return;
     playTone(220, 0.1, 'triangle', 0.12, 150);
   },
 
   /** 合成音 — 音高随等级上升 */
   playMerge(level = 0) {
-    const baseFreq = 330 + level * 55; // 330Hz ~ 880Hz
+    if (this._muted) return;
+    const baseFreq = 330 + level * 55;
     playTone(baseFreq, 0.15, 'sine', 0.18);
-    // 泛音
     playTone(baseFreq * 1.5, 0.1, 'sine', 0.08);
   },
 
   /** 里程碑庆祝 — 三音和弦 */
   playMilestone(level = 0) {
+    if (this._muted) return;
     const root = 440 + level * 55;
     playChord([root, root * 1.25, root * 1.5], 0.4, 0.15);
-    // 延迟第二拍
     setTimeout(() => {
       playChord([root * 1.25, root * 1.5, root * 2], 0.35, 0.12);
     }, 150);
@@ -73,13 +83,23 @@ export const SoundSystem = {
 
   /** 游戏结束音 — 下行三音 */
   playGameOver() {
+    if (this._muted) return;
     playTone(440, 0.2, 'triangle', 0.14, 330);
     setTimeout(() => playTone(330, 0.2, 'triangle', 0.12, 220), 150);
     setTimeout(() => playTone(220, 0.35, 'triangle', 0.1, 110), 300);
   },
 
+  /** 危险线心跳 — 低频重复脉冲 */
+  playHeartbeat(intensity = 0) {
+    if (this._muted) return;
+    const vol = 0.08 + intensity * 0.1; // 随强度增大
+    playTone(55, 0.15, 'sine', vol);
+    playTone(110, 0.08, 'sine', vol * 0.5);
+  },
+
   /** UI 点击音 */
   playClick() {
+    if (this._muted) return;
     playTone(880, 0.05, 'sine', 0.08);
   },
 

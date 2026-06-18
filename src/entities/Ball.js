@@ -1,6 +1,6 @@
 import * as PIXI from 'pixi.js';
 import Matter from 'matter-js';
-import { BALL_LEVELS } from '../config/constants.js';
+import { BALL_LEVELS, PHYSICS } from '../config/constants.js';
 
 // ============================================================
 // 球体 — 多层渲染模拟玻璃/陶瓷质感
@@ -19,11 +19,11 @@ export class Ball {
     this.color = def.body;
     this.name = def.name;
 
-    // ---- 物理体 ----
+    // ---- 物理体 (参数来自 PHYSICS 常量) ----
     this.body = Matter.Bodies.circle(x, y, this.radius, {
-      restitution: 0.15,
-      friction: 0.4,
-      density: 0.002,
+      restitution: PHYSICS.ballRestitution,
+      friction: PHYSICS.ballFriction,
+      density: PHYSICS.ballDensity,
       label: `ball_${this.id}`,
     });
     this.body._ballRef = this;
